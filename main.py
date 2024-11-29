@@ -65,7 +65,6 @@ class VirtualKeyboard:
             cv2.rectangle(canvas, (x1, y1), (x2, y2), (200, 200, 200), -1)
             cv2.rectangle(canvas, (x1, y1), (x2, y2), (100, 100, 100), 1)
             
-            # Add text to the key
             cv2.putText(canvas, key['text'], 
                         (x1 + 10, y2 - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 
@@ -84,7 +83,6 @@ class VirtualKeyboard:
         for key in self.keyboard_keys:
             x1, y1, x2, y2 = key['rect']
             if x1 <= x <= x2 and y1 <= y <= y2:
-                # Highlight the key
                 cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 
                 thumb_tip = hand_landmarks.landmark[4]
@@ -256,6 +254,5 @@ while cap.isOpened():
     if cv2.waitKey(5) & 0xFF == 27:
         break
 
-# Release resources
 cap.release()
 cv2.destroyAllWindows()
