@@ -7,7 +7,6 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-# from tensorflow/tjms-models
 MESH_ANNOTATIONS = {
     'rightEyeUpper0': [246, 161, 160, 159, 158, 157, 173],
     'rightEyeLower0': [33, 7, 163, 144, 145, 153, 154, 155, 133],
@@ -30,20 +29,79 @@ MESH_ANNOTATIONS = {
 }
 
 
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+KEYBOARD_LAYOUT = [
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+    ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+    ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'BKSP'],
+    ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', 'ENTER']
+]
 
-hands = mp_hands.Hands(
-    max_num_hands=2,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.5
-)
-
-cap = cv2.VideoCapture(0)
+class VirtualKeyboard:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.keyboard_keys = []
+        self.typed_text = ""
+        self.create_keyboard()
+        
+    def create_keyboard(self):
+        key_width = self.width // 10
+        key_height = self.height // 10
+        
+        for row_idx, row in enumerate(KEYBOARD_LAYOUT):
+            row_keys = []
+            for col_idx, key in enumerate(row):
+                x = col_idx * key_width
+                y = row_idx * key_height + self.height // 2
+                row_keys.append({
+                    'text': key,
+                    'rect': (x, y, x + key_width, y + key_height)
+                })
+            self.keyboard_keys.extend(row_keys)
+        
+    def draw_keyboard(self, canvas):
+        for key in self.keyboard_keys:
+            x1, y1, x2, y2 = key['rect']
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (200, 200, 200), -1)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (100, 100, 100), 1)
+            
+            # Add text to the key
+            cv2.putText(canvas, key['text'], 
+                        (x1 + 10, y2 - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.5, (0, 0, 0), 1)
+        
+        cv2.putText(canvas, self.typed_text, 
+                    (10, 50), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    1, (255, 255, 255), 2)
+    
+    def detect_key_press(self, hand_landmarks, canvas):
+        index_finger_tip = hand_landmarks.landmark[8]
+        x = int(index_finger_tip.x * canvas.shape[1])
+        y = int(index_finger_tip.y * canvas.shape[0])
+        
+        for key in self.keyboard_keys:
+            x1, y1, x2, y2 = key['rect']
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                # Highlight the key
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                
+                thumb_tip = hand_landmarks.landmark[4]
+                thumb_x = int(thumb_tip.x * canvas.shape[1])
+                thumb_y = int(thumb_tip.y * canvas.shape[0])
+                
+                distance = np.sqrt((x - thumb_x)**2 + (y - thumb_y)**2)
+                
+                if distance < 30:  
+                    if key['text'] == 'BKSP':
+                        self.typed_text = self.typed_text[:-1]
+                    elif key['text'] == 'ENTER':
+                        self.typed_text += '\n'
+                    else:
+                        self.typed_text += key['text']
+                    
+                    cv2.waitKey(200)
 
 def draw_eye_outline(canvas, face_landmarks):
     right_eye_points = (MESH_ANNOTATIONS['rightEyeUpper0'] + 
@@ -130,19 +188,41 @@ def draw_lip_outline(canvas, face_landmarks):
     points = points.reshape((-1, 1, 2))
     
     cv2.polylines(canvas, [points], True, (0, 0, 255), 3)  
-    cv2.fillPoly(canvas, [points], (0, 0, 200)) 
+    cv2.fillPoly(canvas, [points], (0, 0, 200))    
+
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+hands = mp_hands.Hands(
+    max_num_hands=2,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.5
+)
+
+cap = cv2.VideoCapture(0)
+
+ret, frame = cap.read()
+height, width, _ = frame.shape
+
+keyboard = VirtualKeyboard(width, height)
 
 while cap.isOpened():
     success, image = cap.read()
     if not success:
         continue
 
-    # black canvas, you can change it by adding canvas with its rgb
-    canvas = np.zeros((image.shape[0], image.shape[1], 3), dtype=np.uint8)
-
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    canvas = np.zeros_like(image)
+    
     face_results = face_mesh.process(image_rgb)
     hand_results = hands.process(image_rgb)
+
+    keyboard.draw_keyboard(canvas)
 
     if face_results.multi_face_landmarks:
         for face_landmarks in face_results.multi_face_landmarks:
@@ -150,19 +230,17 @@ while cap.isOpened():
             draw_iris_outline(canvas, face_landmarks)  
             draw_eyebrow_outline(canvas, face_landmarks)  
             draw_lip_outline(canvas, face_landmarks)
-
-            # for face landmarks
+            
             mp_drawing.draw_landmarks(
                 canvas,
                 face_landmarks,
-                mp_face_mesh.FACEMESH_TESSELATION,  # tesselation for detailed wireframe
+                mp_face_mesh.FACEMESH_TESSELATION,
                 landmark_drawing_spec=None,  
                 connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
             )
 
     if hand_results.multi_hand_landmarks:
         for hand_landmarks in hand_results.multi_hand_landmarks:
-            # for hand landmarks
             mp_drawing.draw_landmarks(
                 canvas,
                 hand_landmarks,
@@ -170,11 +248,14 @@ while cap.isOpened():
                 landmark_drawing_spec=mp_drawing_styles.get_default_hand_landmarks_style(),
                 connection_drawing_spec=mp_drawing_styles.get_default_hand_connections_style()
             )
+            
+            keyboard.detect_key_press(hand_landmarks, canvas)
 
-    cv2.imshow('Soyface Detector', canvas)
+    cv2.imshow('RalphDGAF', canvas)
 
     if cv2.waitKey(5) & 0xFF == 27:
         break
 
+# Release resources
 cap.release()
 cv2.destroyAllWindows()
